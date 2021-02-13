@@ -1,0 +1,69 @@
+        <%- include('../includes/head.ejs') %>
+        <link rel="stylesheet" href="/css/cart.css">
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <!-- Ensures optimal rendering on mobile devices. -->
+        <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+        <!-- Optimal Internet Explorer compatibility -->
+    </head>
+
+    <body>
+        <%- include('../includes/navigation.ejs') %>
+        <main>
+            <ul class="cart__item-list">
+                <% products.forEach(p => { %>
+                <li class="cart__item">
+                    <h1><%=p.productId.title%></h1>
+                    <h2>Quantity: <%=p.quantity%></h2>
+                </li>
+                <% }) %>
+            </ul>
+            <div class="centered"><h2>Total: <%= totalSum %></h2></div>
+            <!-- PAYPAL -->
+            <div class="payment-method">
+                <script src="https://www.paypal.com/sdk/js?client-id=ARsDsud1QkWBldMe2UI-V-1A2bUtS4szq3_6wqiQFeeoJuY2ZXguscHptGoyy2YPUFqfIJNziBiPczEQ&currency=EUR">
+                </script>
+                <div id="paypal-button-container"></div>
+                   <!-- Add the checkout buttons, set up the order and approve the order -->
+                    <script>
+                        var csrf = '<%=csrf%>';
+                        paypal
+                        .Buttons({
+                            createOrder: function (data, actions) {
+                                return actions.order.create({
+                                    intent: "CAPTURE",
+                                    purchase_units: [
+                                    {
+                                        amount: {
+                                            value: "<%= totalSum %>"
+                                        },
+                                    },
+                                    ],
+                                });
+                            },
+                            onApprove: function (data, actions) {
+                                return actions.order.capture().then(completePayPalPayment(data, csrf));
+                            }
+                        })
+                        .render("#paypal-button-container"); // Display payment options on your web page
+                    </script>
+            </div>
+            <div class="centered">
+                <h2>- OR -</h2>
+            </div>
+            <!-- STRIPE -->
+            <div class="payment-method">
+                <button id="order-btn" class="btn">Pay with Stripe</button>
+                <script src="https://js.stripe.com/v3/"></script>
+                <script>
+                    var stripe = Stripe("pk_test_D9fTcFBRjcQmrjyQ2SdGoOoG");
+                    var orderBtn = document.getElementById("order-btn");
+                    orderBtn.addEventListener('click', function() {
+                        stripe.redirectToCheckout({
+                            sessionId: '<%= sessionId %>'
+                        })
+                    })
+                </script>
+            </div>
+        </main>
+        <%- include('../includes/end.ejs') %>
+        <script src="/js/admin.js"></script>
