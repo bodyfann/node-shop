@@ -6,14 +6,13 @@ const session = require("express-session");
 const MongoDBStore = require("connect-mongodb-session")(session);
 const csrf = require("csurf");
 const flash = require("connect-flash");
-const multer = require("multer");
+const Multer = require("multer");
 
 const errorController = require("./controllers/error");
 const shopController = require("./controllers/shop");
 const User = require("./models/user");
 
-const MONGODB_URI =
-  "mongodb+srv://danny:thenhe@cluster0.twt5o.mongodb.net/shop";
+const MONGODB_URI = process.env.MONGO_DB_URI;
 
 const app = express();
 const store = MongoDBStore({
@@ -21,15 +20,6 @@ const store = MongoDBStore({
   collection: "sessions",
 });
 const csrfProtection = csrf();
-
-const fileStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "images");
-  },
-  filename: (req, file, cb) => {
-    cb(null, new Date().toISOString() + "-" + file.originalname);
-  },
-});
 
 const fileFilter = (req, file, cb) => {
   if (
@@ -43,6 +33,14 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
+const multer = Multer({
+  storage: Multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024, // no larger than 5mb, you can change as needed.
+  },
+  fileFilter: fileFilter,
+});
+
 app.set("view engine", "ejs"); //ejs templates
 app.set("views", "views"); //folders where templates are defined
 
@@ -51,11 +49,9 @@ const shopRoutes = require("./routes/shop");
 const authRoutes = require("./routes/auth");
 
 app.use(express.urlencoded({ extended: false }));
-app.use(
-  multer({ storage: fileStorage, fileFilter: fileFilter }).single("image")
-);
+app.use(multer.single("image"));
 app.use(express.static(path.join(__dirname, "public")));
-app.use("/images", express.static(path.join(__dirname, "images")));
+
 app.use(
   session({
     secret: "my secret",

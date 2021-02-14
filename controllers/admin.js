@@ -1,9 +1,15 @@
 const mongoose = require("mongoose");
 const fileHelper = require("../util/file");
 
+const { Storage } = require("@google-cloud/storage");
+
 const { validationResult } = require("express-validator");
 
 const Product = require("../models/product");
+
+// Instantiate a storage client
+const storage = new Storage();
+const bucket = storage.bucket(process.env.GCLOUD_STORAGE_BUCKET);
 
 exports.getAddProductPage = (req, res, next) => {
   res.render("admin/edit-product", {
@@ -26,6 +32,7 @@ exports.postAddProduct = (req, res, next) => {
   const image = req.file;
   const price = req.body.price;
   const description = req.body.description;
+
   if (!image) {
     return res.status(422).render("admin/edit-product", {
       path: "admin/add-product",
@@ -60,7 +67,11 @@ exports.postAddProduct = (req, res, next) => {
     });
   }
 
-  const imageUrl = image.path;
+  const fileName = new Date().toISOString() + "-" + req.file.originalname;
+  const blob = bucket.file(fileName);
+  fileHelper.uploadImage(req.file, blob);
+
+  const imageUrl = `https://storage.googleapis.com/${bucket.name}/${blob.name}`;
 
   const product = new Product({
     title: title,
@@ -77,21 +88,6 @@ exports.postAddProduct = (req, res, next) => {
       res.redirect("/admin/products");
     })
     .catch((err) => {
-      // return res.status(500).render("admin/edit-product", {
-      //   path: "admin/add-product",
-      //   pageTitle: "Add Product",
-      //   errorMessage: "Database operation failed, please try again.",
-      //   editing: false,
-      //   hasError: true,
-      //   product: {
-      //     title: title,
-      //     imageUrl: imageUrl,
-      //     price: price,
-      //     description: description,
-      //   },
-      //   validationErrors: [],
-      // });
-      //res.redirect("/500");
       const error = new Error(err);
       error.httpStatusCode = 500;
       return next(error);
@@ -160,8 +156,16 @@ exports.postEditProduct = (req, res, next) => {
       product.price = updatedPrice;
       product.description = updatedDesc;
       if (image) {
-        fileHelper.deleteFile(product.imageUrl);
-        product.imageUrl = image.path;
+        // Delete older image
+        const olderImage = product.imageUrl.match(/appspot.com\/(.*)/)[1];
+        fileHelper.deleteImage(storage, bucket.name, olderImage);
+        // Upload new image
+        const fileName = new Date().toISOString() + "-" + req.file.originalname;
+        const blob = bucket.file(fileName);
+        fileHelper.uploadImage(req.file, blob);
+
+        const imageUrl = `https://storage.googleapis.com/${bucket.name}/${blob.name}`;
+        product.imageUrl = imageUrl;
       }
       product.userId = req.user._id;
       return product.save().then((result) => {
@@ -199,7 +203,9 @@ exports.deleteProduct = (req, res, next) => {
       if (!product) {
         return next(new Error("Product not found!"));
       }
-      fileHelper.deleteFile(product.imageUrl);
+      const olderImage = product.imageUrl.match(/appspot.com\/(.*)/)[1];
+      console.log(olderImage);
+      fileHelper.deleteImage(storage, bucket.name, olderImage);
       return Product.deleteOne({ _id: prodId, userId: req.user._id });
     })
     .then((result) => {

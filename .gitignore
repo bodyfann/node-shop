@@ -2,6 +2,5 @@ node_modules/
 .vscode/
 package-lock.json
 config.sh
+config/*
 data/
-images/*
-!images/.gitkeep

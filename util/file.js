@@ -1,13 +1,27 @@
-const fs = require("fs");
-
-const deleteFile = (filePath) => {
-  if (fs.existsSync(filePath)) {
-    fs.unlink(filePath, (err) => {
-      if (err) {
-        throw new Error("Something bad happened deleting the old image.");
-      }
-    });
+const deleteImage = async (storage, bucketName, fileName) => {
+  try {
+    await storage.bucket(bucketName).file(fileName).delete();
+    console.log("Image Deleted.");
+  } catch {
+    console.log("Cannot delete image.");
   }
 };
 
-exports.deleteFile = deleteFile;
+const uploadImage = (file, blob) => {
+  const blobStream = blob.createWriteStream({
+    resumable: false,
+  });
+
+  blobStream.on("error", (err) => {
+    next(err);
+  });
+
+  blobStream.on("finish", () => {
+    console.log("Image Uploaded");
+  });
+
+  blobStream.end(file.buffer);
+};
+
+exports.deleteImage = deleteImage;
+exports.uploadImage = uploadImage;
