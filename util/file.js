@@ -13,6 +13,7 @@ const uploadImage = (file, blob) => {
   });
 
   blobStream.on("error", (err) => {
+    console.log(err);
     next(err);
   });
 

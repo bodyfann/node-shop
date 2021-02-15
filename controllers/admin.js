@@ -204,7 +204,6 @@ exports.deleteProduct = (req, res, next) => {
         return next(new Error("Product not found!"));
       }
       const olderImage = product.imageUrl.match(/appspot.com\/(.*)/)[1];
-      console.log(olderImage);
       fileHelper.deleteImage(storage, bucket.name, olderImage);
       return Product.deleteOne({ _id: prodId, userId: req.user._id });
     })
