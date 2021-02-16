@@ -3,7 +3,11 @@ const path = require("path");
 const express = require("express");
 const mongoose = require("mongoose");
 const session = require("express-session");
-const MongoDBStore = require("connect-mongodb-session")(session);
+//const MongoDBStore = require("connect-mongodb-session")(session);
+
+const { Datastore } = require("@google-cloud/datastore");
+const { DatastoreStore } = require("@google-cloud/connect-datastore");
+
 const csrf = require("csurf");
 const flash = require("connect-flash");
 const Multer = require("multer");
@@ -15,10 +19,11 @@ const User = require("./models/user");
 const MONGODB_URI = process.env.MONGO_DB_URI;
 
 const app = express();
-const store = MongoDBStore({
-  uri: MONGODB_URI,
-  collection: "sessions",
-});
+// const store = MongoDBStore({
+//   uri: MONGODB_URI,
+//   collection: "sessions",
+// });
+
 const csrfProtection = csrf();
 
 const fileFilter = (req, file, cb) => {
@@ -57,7 +62,15 @@ app.use(
     secret: "my secret",
     resave: false,
     saveUninitialized: false,
-    store: store,
+    //store: store,
+    store: new DatastoreStore({
+      kind: "express-sessions",
+      expirationMs: 0,
+      dataset: new Datastore({
+        projectId: process.env.GCLOUD_PROJECT,
+        keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+      }),
+    }),
   })
 );
 

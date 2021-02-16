@@ -8,6 +8,11 @@ const PDFDocument = require("pdfkit");
 const Product = require("../models/product");
 const Order = require("../models/order");
 
+/* Datastore */
+const { Datastore } = require("@google-cloud/datastore");
+const datastore = new Datastore();
+/* End of Datastore */
+
 const ITEMS_PER_PAGE = 2;
 
 exports.getProductsPage = (req, res, next) => {
@@ -225,6 +230,59 @@ exports.checkoutSuccess = async (req, res, next) => {
         status: "PENDING",
         processorOrderId: orderId,
       });
+
+      /* Datastore */
+      // Store Order
+      const currUser = req.user._id.toString();
+      const orderKey = datastore.key(["User", currUser, "Order", orderId]);
+      const orderDS = {
+        key: orderKey,
+        data: {
+          status: "PENDING",
+        },
+      };
+
+      datastore
+        .insert(orderDS)
+        .then(() => {
+          console.log(
+            "Saved " + JSON.stringify(orderDS.key) + ": " + orderDS.data.status
+          );
+        })
+        .catch((err) => console.log(err));
+
+      // Store Products <-> Order
+      const productOrderKey = datastore.key("ProductOrder");
+      products.forEach((product) => {
+        let productId = product.product._id.toString();
+        let quantity = product.quantity;
+        let productOrder = {
+          key: productOrderKey,
+          data: {
+            product: productId,
+            order: orderId,
+            quantity: quantity,
+          },
+        };
+
+        datastore
+          .insert(productOrder)
+          .then(() => {
+            console.log(
+              "Saved " +
+                JSON.stringify(productOrder.key) +
+                ": " +
+                productOrder.data.order +
+                " - " +
+                productOrder.data.product +
+                " (" +
+                productOrder.data.quantity +
+                ")"
+            );
+          })
+          .catch((err) => console.log(err));
+      });
+      /* End of Datastore */
       return order.save();
     })
     .then((result) => {
@@ -240,20 +298,46 @@ exports.checkoutSuccess = async (req, res, next) => {
     });
 };
 
-exports.getOrdersPage = (req, res, next) => {
-  Order.find({ "user.userId": req.user._id })
-    .then((orders) => {
-      res.render("shop/orders", {
-        pageTitle: "Your Orders",
-        path: "/orders",
-        orders: orders,
-      });
-    })
-    .catch((err) => {
-      const error = new Error(err);
-      error.httpStatusCode = 500;
-      return next(error);
-    });
+exports.getOrdersPage = async (req, res, next) => {
+  const currUser = req.user._id.toString();
+
+  /* Datastore */
+  let ordersJSON = []; // Array of order objects to pass to the view
+
+  // Get all orders for current user
+  const ancestorKey = datastore.key(["User", currUser]);
+  const ordersQuery = datastore.createQuery("Order").hasAncestor(ancestorKey);
+  const [orders] = await datastore.runQuery(ordersQuery);
+
+  // For each order get the products from productOrders
+  for (const order of orders) {
+    let orderJSON = {};
+    orderId = order[datastore.KEY].name.toString();
+    orderJSON["_id"] = orderId;
+    orderJSON["status"] = order.status;
+    let productOrderQuery = datastore
+      .createQuery("ProductOrder")
+      .filter("order", "=", orderId);
+    const [productOrders] = await datastore.runQuery(productOrderQuery);
+
+    // For each ProductOrder get the product details from MongoDB
+    productsArray = [];
+    for (const productOrder of productOrders) {
+      let p = {
+        quantity: productOrder.quantity,
+        product: {},
+      };
+      p.product = await Product.findById(productOrder.product);
+      productsArray.push(p);
+    }
+    orderJSON["products"] = productsArray;
+    ordersJSON.push(orderJSON);
+  }
+  res.render("shop/orders", {
+    pageTitle: "Your Orders",
+    path: "/orders",
+    orders: ordersJSON,
+  });
 };
 
 exports.getInvoice = (req, res, next) => {

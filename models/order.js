@@ -20,8 +20,6 @@ const orderSchema = new Schema({
   },
   status: { type: String, required: true },
   processorOrderId: { type: String, required: false },
-  transactionId: { type: String, required: false },
-  refundId: { type: String, required: false },
 });
 
 module.exports = mongoose.model("Order", orderSchema);
