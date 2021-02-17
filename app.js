@@ -127,9 +127,11 @@ app.get("/500", errorController.get500Page);
 app.use(errorController.get404Page);
 
 app.use((error, req, res, next) => {
-  if (req.flash) {
-    req.flash("error", error.message);
-  }
+  // Leaving this here in case we want to show some useful 500 errors to the user
+  // if (req.flash) {
+  //   req.flash("error", error.message);
+  // }
+  console.log(error.message);
   res.redirect("/500");
 });
 

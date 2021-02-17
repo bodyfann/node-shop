@@ -160,6 +160,7 @@ exports.postCheckoutPage = (req, res, next) => {
       total = total.toFixed(2);
       return stripe.checkout.sessions.create({
         payment_method_types: ["card"],
+        client_reference_id: req.user._id.toString(),
         line_items: products.map((p) => {
           return {
             name: p.productId.title,
@@ -221,33 +222,21 @@ exports.checkoutSuccess = async (req, res, next) => {
         throw new Error("Shopping Cart is empty!");
       }
 
-      const order = new Order({
-        user: {
-          email: req.user.email,
-          userId: req.user,
-        },
-        products: products,
-        status: "PENDING",
-        processorOrderId: orderId,
-      });
-
-      /* Datastore */
       // Store Order
       const currUser = req.user._id.toString();
       const orderKey = datastore.key(["User", currUser, "Order", orderId]);
-      const orderDS = {
+      const order = {
         key: orderKey,
         data: {
+          orderId: orderId,
           status: "PENDING",
         },
       };
 
       datastore
-        .insert(orderDS)
+        .insert(order)
         .then(() => {
-          console.log(
-            "Saved " + JSON.stringify(orderDS.key) + ": " + orderDS.data.status
-          );
+          console.log("Order Saved");
         })
         .catch((err) => console.log(err));
 
@@ -268,22 +257,10 @@ exports.checkoutSuccess = async (req, res, next) => {
         datastore
           .insert(productOrder)
           .then(() => {
-            console.log(
-              "Saved " +
-                JSON.stringify(productOrder.key) +
-                ": " +
-                productOrder.data.order +
-                " - " +
-                productOrder.data.product +
-                " (" +
-                productOrder.data.quantity +
-                ")"
-            );
+            console.log("ProductOrder Saved!");
           })
           .catch((err) => console.log(err));
       });
-      /* End of Datastore */
-      return order.save();
     })
     .then((result) => {
       return req.user.clearCart();
@@ -301,7 +278,6 @@ exports.checkoutSuccess = async (req, res, next) => {
 exports.getOrdersPage = async (req, res, next) => {
   const currUser = req.user._id.toString();
 
-  /* Datastore */
   let ordersJSON = []; // Array of order objects to pass to the view
 
   // Get all orders for current user
@@ -340,56 +316,81 @@ exports.getOrdersPage = async (req, res, next) => {
   });
 };
 
-exports.getInvoice = (req, res, next) => {
+exports.getInvoice = async (req, res, next) => {
+  const currUser = req.user._id.toString();
   const orderId = req.params.orderId;
-  Order.findById(orderId)
-    .then((order) => {
-      if (!order) {
-        return next(new Error("No order found!"));
-      }
-      if (order.user.userId.toString() !== req.user._id.toString()) {
-        return next(new Error("Unauthorized!"));
-      }
-      const invoiceName = "invoice-" + orderId + ".pdf";
-      const invoicePath = path.join("data", "invoices", invoiceName);
 
-      const pdfDoc = new PDFDocument();
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader(
-        "Content-Disposition",
-        'inline; filename="' + invoiceName + '"'
+  // Get order
+  const orderKey = datastore.key(["User", currUser, "Order", orderId]);
+  const [order] = await datastore.get(orderKey);
+  if (order.length === 0) {
+    return next(new Error("No order found!"));
+  }
+
+  // Get productOrder
+  const productOrderQuery = datastore
+    .createQuery("ProductOrder")
+    .filter("order", "=", orderId);
+  const [productOrders] = await datastore.runQuery(productOrderQuery);
+  if (productOrders.length === 0) {
+    return next(new Error("This order looks empty!"));
+  }
+
+  if (order[datastore.KEY].parent.name.toString() !== req.user._id.toString()) {
+    return next(new Error("Unauthorized!"));
+  }
+
+  // For each ProductOrder get the product details from MongoDB
+  productsArray = [];
+  for (const productOrder of productOrders) {
+    let p = {
+      quantity: productOrder.quantity,
+      product: {},
+    };
+    p.product = await Product.findById(productOrder.product);
+    productsArray.push(p);
+  }
+  if (productsArray.length === 0) {
+    return next(
+      new Error("Mmm...this is bad, something is not right in the database.")
+    );
+  }
+
+  const invoiceName = "invoice-" + orderId + ".pdf";
+  const invoicePath = path.join("data", "invoices", invoiceName);
+
+  const pdfDoc = new PDFDocument();
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader(
+    "Content-Disposition",
+    'inline; filename="' + invoiceName + '"'
+  );
+  pdfDoc.pipe(fs.createWriteStream(invoicePath));
+  pdfDoc.pipe(res);
+
+  pdfDoc.fontSize(26).text("Invoice", { underline: true });
+  pdfDoc.text(" ");
+  let totalPrice = 0;
+
+  productsArray.forEach((prod) => {
+    totalPrice += prod.quantity * prod.product.price;
+    pdfDoc
+      .fontSize(14)
+      .text(
+        prod.product.title +
+          " - " +
+          prod.quantity +
+          " x " +
+          "$" +
+          prod.product.price
       );
-      pdfDoc.pipe(fs.createWriteStream(invoicePath));
-      pdfDoc.pipe(res);
-
-      pdfDoc.fontSize(26).text("Invoice", { underline: true });
-      pdfDoc.text(" ");
-      let totalPrice = 0;
-      order.products.forEach((prod) => {
-        totalPrice += prod.quantity * prod.product.price;
-        pdfDoc
-          .fontSize(14)
-          .text(
-            prod.product.title +
-              " - " +
-              prod.quantity +
-              " x " +
-              "$" +
-              prod.product.price
-          );
-      });
-      pdfDoc.text("---");
-      pdfDoc.fontSize(18).text("Total Price: $" + totalPrice.toFixed(2));
-      pdfDoc.end();
-    })
-    .catch((err) => {
-      const error = new Error(err);
-      error.httpStatusCode = 500;
-      return next(error);
-    });
+  });
+  pdfDoc.text("---");
+  pdfDoc.fontSize(18).text("Total Price: $" + totalPrice.toFixed(2));
+  pdfDoc.end();
 };
 
-exports.postStripeWebhook = (req, res, next) => {
+exports.postStripeWebhook = async (req, res, next) => {
   const payload = req.body;
 
   const sig = req.headers["stripe-signature"];
@@ -407,31 +408,36 @@ exports.postStripeWebhook = (req, res, next) => {
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
     const orderId = session.payment_intent;
+    const userId = session.client_reference_id;
 
-    Order.findOne({
-      processorOrderId: orderId,
-    })
-      .then((order) => {
-        if (order !== null) {
-          order.status = "COMPLETED";
-          order.save();
+    const orderKey = datastore.key(["User", userId, "Order", orderId]);
+    const [order] = await datastore.get(orderKey);
 
-          res.status(200).json({
-            verification_status: "SUCCESS",
-          });
-        } else {
-          // Handles race condition where the webhook arrives before the order is created.
-          // 404 forces Stripe to send the webhook again.
-          // Consider refactoring creating the order from the webhook.
-          console.log("Order not found.");
-          res.status(404).json({
-            verification_status: "SUCCESS, BUT ORDER NOT READY",
-          });
-        }
-      })
-      .catch((err) => {
-        console.log(err);
+    if (order) {
+      const entity = {
+        key: orderKey,
+        data: {
+          status: "Completed",
+        },
+      };
+      try {
+        await datastore.update(entity);
+        console.log("Webhook successful");
+        res.status(200).json({
+          verification_status: "SUCCESS",
+        });
+      } catch (error) {
+        console.log("Error updating the database");
+      }
+    } else {
+      // Handles race condition where the webhook arrives before the order is created.
+      // 404 forces Stripe to send the webhook again.
+      // Consider refactoring creating the order from the webhook.
+      console.log("Order not found.");
+      res.status(404).json({
+        verification_status: "SUCCESS, BUT ORDER NOT READY",
       });
+    }
   }
 };
 
@@ -473,8 +479,7 @@ exports.postPaypalWebhook = (req, res, next) => {
           transmission_id: req.header("PAYPAL-TRANSMISSION-ID"),
           transmission_sig: req.header("PAYPAL-TRANSMISSION-SIG"),
           transmission_time: req.header("PAYPAL-TRANSMISSION-TIME"),
-          webhook_id: "89X68905BB630824P",
-          //webhook_id: "6W93031242660823D",
+          webhook_id: process.env.PP_WEBHOOK_ID,
           webhook_event: JSON.parse(req.body.toString()),
         };
 
@@ -494,11 +499,10 @@ exports.postPaypalWebhook = (req, res, next) => {
         console.log("Error getting access token from PayPal: " + err);
       }
     })()
-      .then((ppres) => {
+      .then(async (ppres) => {
         if (ppres.verification_status === "SUCCESS") {
           //Handle the PAYMENT.CAPTURE.COMPLETED" event
           const eventBody = JSON.parse(req.body.toString());
-
           if (eventBody.event_type === "PAYMENT.CAPTURE.COMPLETED") {
             //Get order ID from resource->links->up
             const links = eventBody.resource.links;
@@ -507,28 +511,52 @@ exports.postPaypalWebhook = (req, res, next) => {
             });
             const orderId = upLink.href.match(/\/orders\/(.*)/)[1];
 
-            Order.findOne({
-              processorOrderId: orderId,
-            })
-              .then((order) => {
-                if (order !== null) {
-                  order.status = "COMPLETED";
-                  order.save();
-                } else {
-                  // Throw error to generate a 500 and have PayPal to retry the webhook later.
-                  // This should prevent race conditions where the webhook arrives before the order is created.
-                  // Consider refactoring creating the order from the webhook.
-                  throw new Error("Order not found");
-                }
-              })
-              .catch((err) => {
-                console.log(err);
+            const orderQuery = datastore
+              .createQuery("Order")
+              .filter("orderId", "=", orderId);
+            const [orders] = await datastore.runQuery(orderQuery);
+
+            if (orders) {
+              const order = orders[0];
+              const userId = order[datastore.KEY].parent.name.toString();
+              const orderKey = datastore.key([
+                "User",
+                userId,
+                "Order",
+                orderId,
+              ]);
+              const entity = {
+                key: orderKey,
+                data: {
+                  status: "Completed",
+                },
+              };
+              try {
+                await datastore.update(entity);
+                console.log("Webhook successful");
+                res.status(200).json({
+                  verification_status: "SUCCESS",
+                });
+              } catch (error) {
+                console.log("Error updating the database");
+              }
+            } else {
+              // Handles race condition where the webhook arrives before the order is created.
+              // 404 forces Stripe to send the webhook again.
+              // Consider refactoring creating the order from the webhook.
+              console.log("Order not found.");
+              res.status(404).json({
+                verification_status: "SUCCESS, BUT ORDER NOT READY",
               });
+            }
+          } else {
+            console.log(
+              "Validation succeeded, but I don't care about this webhook"
+            );
+            res.status(200).json({
+              verification_status: "SUCCESS",
+            });
           }
-          console.log("Validation succeeded.");
-          res.status(200).json({
-            verification_status: "SUCCESS",
-          });
         } else {
           console.log("Validation failed.");
           res.status(400).json({

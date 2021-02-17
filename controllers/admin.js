@@ -219,3 +219,24 @@ exports.deleteProduct = (req, res, next) => {
       });
     });
 };
+
+// PLEASE DELETE ME AT SOME POINT
+const { Datastore } = require("@google-cloud/datastore");
+const datastore = new Datastore();
+
+exports.runDSQuery = async (req, res, next) => {
+  // Get all orders (optional for current user)
+  const currUser = req.user._id.toString();
+
+  //const ancestorKey = datastore.key(["User", currUser]);
+  const ordersQuery = datastore.createQuery("Order"); //.hasAncestor(ancestorKey);
+  const [orders] = await datastore.runQuery(ordersQuery);
+  res.status(200).json({
+    orders,
+  });
+  console.log(orders);
+
+  // Delete all orders
+  // TBD
+  //await datastore.delete(orderKey);
+};
