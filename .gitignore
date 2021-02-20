@@ -4,3 +4,4 @@ package-lock.json
 config.sh
 config/*
 data/
+datastore-emulator.sh

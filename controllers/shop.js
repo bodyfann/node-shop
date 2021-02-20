@@ -7,11 +7,11 @@ const PDFDocument = require("pdfkit");
 
 const Product = require("../models/product");
 const Order = require("../models/order");
+const User = require("../models/user");
 
-/* Datastore */
 const { Datastore } = require("@google-cloud/datastore");
+const order = require("../models/order");
 const datastore = new Datastore();
-/* End of Datastore */
 
 const ITEMS_PER_PAGE = 2;
 
@@ -19,15 +19,16 @@ exports.getProductsPage = (req, res, next) => {
   const page = +req.query.page || 1;
   let totalItems;
 
-  Product.find()
-    .countDocuments()
-    .then((numProducts) => {
-      totalItems = numProducts;
-      return Product.find()
-        .skip((page - 1) * ITEMS_PER_PAGE)
-        .limit(ITEMS_PER_PAGE);
+  Product.list()
+    .then((result) => {
+      totalItems = result.entities.length;
+      return Product.list({
+        offset: (page - 1) * ITEMS_PER_PAGE,
+        limit: ITEMS_PER_PAGE,
+      });
     })
-    .then((products) => {
+    .then((result) => {
+      const products = result.entities;
       res.render("shop/product-list", {
         prods: products,
         pageTitle: "Products",
@@ -41,6 +42,7 @@ exports.getProductsPage = (req, res, next) => {
       });
     })
     .catch((err) => {
+      console.log(err);
       const error = new Error(err);
       error.httpStatusCode = 500;
       return next(error);
@@ -48,10 +50,12 @@ exports.getProductsPage = (req, res, next) => {
 };
 
 exports.getProductDetailsPage = (req, res, next) => {
-  const prodId = req.params.productId;
+  const prodId = parseInt(req.params.productId);
 
-  Product.findById(prodId)
-    .then((product) => {
+  Product.get(prodId)
+    .then((entity) => {
+      const product = entity.entityData;
+      product.id = prodId;
       res.render("shop/product-detail", {
         product: product,
         pageTitle: product.title,
@@ -59,6 +63,7 @@ exports.getProductDetailsPage = (req, res, next) => {
       });
     })
     .catch((err) => {
+      console.log(err);
       const error = new Error(err);
       error.httpStatusCode = 500;
       return next(error);
@@ -69,15 +74,16 @@ exports.getIndexPage = (req, res, next) => {
   const page = +req.query.page || 1;
   let totalItems;
 
-  Product.find()
-    .countDocuments()
-    .then((numProducts) => {
-      totalItems = numProducts;
-      return Product.find()
-        .skip((page - 1) * ITEMS_PER_PAGE)
-        .limit(ITEMS_PER_PAGE);
+  Product.list()
+    .then((result) => {
+      totalItems = result.entities.length;
+      return Product.list({
+        offset: (page - 1) * ITEMS_PER_PAGE,
+        limit: ITEMS_PER_PAGE,
+      });
     })
-    .then((products) => {
+    .then((result) => {
+      const products = result.entities;
       res.render("shop/index", {
         prods: products,
         pageTitle: "Shop",
@@ -91,51 +97,90 @@ exports.getIndexPage = (req, res, next) => {
       });
     })
     .catch((err) => {
+      console.log(err);
       const error = new Error(err);
       error.httpStatusCode = 500;
       return next(error);
     });
 };
 
-exports.getCartPage = (req, res, next) => {
-  req.user
-    .populate("cart.items.productId")
-    .execPopulate()
-    .then((user) => {
-      const products = user.cart.items;
-      res.render("shop/cart", {
-        pageTitle: "Your Cart",
-        path: "/cart",
-        products: products,
+exports.getCartPage = async (req, res, next) => {
+  let errorMessage = "";
+  // Get products
+  const products = [];
+  for (const item of req.user.cart.items) {
+    let product = {};
+    await Product.get(item.productId)
+      .then((entity) => {
+        const p = entity.entityData;
+        p.id = item.productId;
+        product = {
+          quantity: item.quantity,
+          product: { ...p },
+        };
+        return product;
+      })
+      .then((product) => {
+        products.push(product);
+      })
+      .catch((err) => {
+        console.log(err);
+        if (err.code === "ERR_ENTITY_NOT_FOUND") {
+          errorMessage =
+            "Some items are not anymore available and have been removed from your cart!";
+          // Delete items from cart
+          const userId = parseInt(req.user[datastore.KEY].id);
+          console.log("Deleting product " + item.productId + " from cart");
+          User.get(userId)
+            .then((user) => {
+              user.removeFromCart(item.productId);
+            })
+            .catch((err) => {
+              console.log(err);
+            });
+        }
       });
-    })
-    .catch((err) => {
-      const error = new Error(err);
-      error.httpStatusCode = 500;
-      return next(error);
-    });
+  }
+  res.render("shop/cart", {
+    pageTitle: "Your Cart",
+    path: "/cart",
+    errorMessage: errorMessage,
+    products: products,
+  });
 };
 
 exports.postCart = (req, res, next) => {
-  const prodId = req.body.productId;
+  const prodId = parseInt(req.body.productId);
+  const userId = parseInt(req.user[datastore.KEY].id);
 
-  Product.findById(prodId)
-    .then((product) => {
-      return req.user.addToCart(product);
+  User.get(userId)
+    .then(async (user) => {
+      await user.addToCart(prodId);
     })
     .then((result) => {
       res.redirect("/cart");
+    })
+    .catch((err) => {
+      console.log(err);
+      const error = new Error(err);
+      error.httpStatusCode = 500;
+      return next(error);
     });
 };
 
 exports.postCartDeleteProduct = (req, res, next) => {
   const prodId = req.body.productId;
-  req.user
-    .removeFromCart(prodId)
+  const userId = parseInt(req.user[datastore.KEY].id);
+
+  User.get(userId)
+    .then(async (user) => {
+      await user.removeFromCart(prodId);
+    })
     .then((result) => {
       res.redirect("/cart");
     })
     .catch((err) => {
+      console.log(err);
       const error = new Error(err);
       error.httpStatusCode = 500;
       return next(error);
@@ -143,30 +188,49 @@ exports.postCartDeleteProduct = (req, res, next) => {
 };
 
 exports.postCheckoutPage = (req, res, next) => {
-  let products;
+  const userId = parseInt(req.user[datastore.KEY].id);
   let total = 0;
-  req.user
-    .populate("cart.items.productId")
-    .execPopulate()
-    .then((user) => {
-      products = user.cart.items;
+  const products = [];
+  User.get(userId)
+    .then(async (user) => {
+      // Get Products
+      for (const item of req.user.cart.items) {
+        let product = {};
+        await Product.get(item.productId)
+          .then((entity) => {
+            const p = entity.entityData;
+            p.id = item.productId;
+            product = {
+              quantity: item.quantity,
+              product: { ...p },
+            };
+            return product;
+          })
+          .then((product) => {
+            products.push(product);
+          })
+          .catch((err) => {
+            console.log(err);
+          });
+      }
       total = 0;
       if (products.length == 0) {
         throw new Error("Shopping Cart is empty!");
       }
       products.forEach((p) => {
-        total += p.quantity * p.productId.price;
+        total += p.quantity * p.product.price;
       });
       total = total.toFixed(2);
+
       return stripe.checkout.sessions.create({
         payment_method_types: ["card"],
-        client_reference_id: req.user._id.toString(),
+        client_reference_id: userId,
         line_items: products.map((p) => {
           return {
-            name: p.productId.title,
-            description: p.productId.description,
-            amount: Math.round(p.productId.price * 100),
-            currency: "usd",
+            name: p.product.title,
+            description: p.product.description,
+            amount: Math.round(p.product.price * 100),
+            currency: "eur",
             quantity: p.quantity,
           };
         }),
@@ -211,64 +275,36 @@ exports.checkoutSuccess = async (req, res, next) => {
     orderId = body.orderID;
   }
 
-  req.user
-    .populate("cart.items.productId")
-    .execPopulate()
+  const currUser = parseInt(req.user[datastore.KEY].id);
+
+  User.get(currUser)
     .then((user) => {
-      const products = user.cart.items.map((i) => {
-        return { quantity: i.quantity, product: { ...i.productId._doc } };
-      });
+      const products = user.cart.items;
       if (products.length == 0) {
         throw new Error("Shopping Cart is empty!");
       }
 
-      // Store Order
-      const currUser = req.user._id.toString();
-      const orderKey = datastore.key(["User", currUser, "Order", orderId]);
-      const order = {
-        key: orderKey,
-        data: {
-          orderId: orderId,
-          status: "PENDING",
-        },
-      };
-
-      datastore
-        .insert(order)
-        .then(() => {
-          console.log("Order Saved");
-        })
-        .catch((err) => console.log(err));
-
-      // Store Products <-> Order
-      const productOrderKey = datastore.key("ProductOrder");
-      products.forEach((product) => {
-        let productId = product.product._id.toString();
-        let quantity = product.quantity;
-        let productOrder = {
-          key: productOrderKey,
-          data: {
-            product: productId,
-            order: orderId,
-            quantity: quantity,
-          },
-        };
-
-        datastore
-          .insert(productOrder)
-          .then(() => {
-            console.log("ProductOrder Saved!");
-          })
-          .catch((err) => console.log(err));
+      // Create Order
+      const order = new Order({
+        products: products,
+        userId: currUser,
+        processorOrderId: orderId,
+        status: "PENDING",
       });
+
+      return order.save();
     })
     .then((result) => {
-      return req.user.clearCart();
+      console.log("Order Created");
+      User.get(currUser).then((user) => {
+        return user.clearCart();
+      });
     })
     .then(() => {
       res.redirect("/orders");
     })
     .catch((err) => {
+      console.log(err);
       const error = new Error(err);
       error.httpStatusCode = 500;
       return next(error);
@@ -276,123 +312,112 @@ exports.checkoutSuccess = async (req, res, next) => {
 };
 
 exports.getOrdersPage = async (req, res, next) => {
-  const currUser = req.user._id.toString();
+  const currUser = parseInt(req.user[datastore.KEY].id);
 
   let ordersJSON = []; // Array of order objects to pass to the view
-
   // Get all orders for current user
-  const ancestorKey = datastore.key(["User", currUser]);
-  const ordersQuery = datastore.createQuery("Order").hasAncestor(ancestorKey);
-  const [orders] = await datastore.runQuery(ordersQuery);
-
-  // For each order get the products from productOrders
-  for (const order of orders) {
-    let orderJSON = {};
-    orderId = order[datastore.KEY].name.toString();
-    orderJSON["_id"] = orderId;
-    orderJSON["status"] = order.status;
-    let productOrderQuery = datastore
-      .createQuery("ProductOrder")
-      .filter("order", "=", orderId);
-    const [productOrders] = await datastore.runQuery(productOrderQuery);
-
-    // For each ProductOrder get the product details from MongoDB
-    productsArray = [];
-    for (const productOrder of productOrders) {
-      let p = {
-        quantity: productOrder.quantity,
-        product: {},
-      };
-      p.product = await Product.findById(productOrder.product);
-      productsArray.push(p);
-    }
-    orderJSON["products"] = productsArray;
-    ordersJSON.push(orderJSON);
-  }
-  res.render("shop/orders", {
-    pageTitle: "Your Orders",
-    path: "/orders",
-    orders: ordersJSON,
-  });
+  Order.list({ filters: ["userId", currUser] })
+    .then(async (result) => {
+      const orders = result.entities;
+      // For each order get the products details
+      for (const order of orders) {
+        let orderJSON = {};
+        let productsArray = [];
+        for (const product of order.products) {
+          let productId = parseInt(product.productId);
+          let p = {
+            quantity: product.quantity,
+            product: {},
+          };
+          p.product = await Product.get(productId);
+          productsArray.push(p);
+        }
+        orderJSON["products"] = productsArray;
+        orderJSON["id"] = order.id;
+        orderJSON["status"] = order.status;
+        ordersJSON.push(orderJSON);
+      }
+    })
+    .then((result) => {
+      res.render("shop/orders", {
+        pageTitle: "Your Orders",
+        path: "/orders",
+        orders: ordersJSON,
+      });
+    })
+    .catch((err) => {
+      console.log(err);
+      const error = new Error(err);
+      error.httpStatusCode = 500;
+      return next(error);
+    });
 };
 
 exports.getInvoice = async (req, res, next) => {
-  const currUser = req.user._id.toString();
-  const orderId = req.params.orderId;
+  const currUser = parseInt(req.user[datastore.KEY].id);
+  const orderId = parseInt(req.params.orderId);
 
-  // Get order
-  const orderKey = datastore.key(["User", currUser, "Order", orderId]);
-  const [order] = await datastore.get(orderKey);
-  if (order.length === 0) {
-    return next(new Error("No order found!"));
-  }
+  Order.get(orderId)
+    .then(async (result) => {
+      let order = result.entityData;
 
-  // Get productOrder
-  const productOrderQuery = datastore
-    .createQuery("ProductOrder")
-    .filter("order", "=", orderId);
-  const [productOrders] = await datastore.runQuery(productOrderQuery);
-  if (productOrders.length === 0) {
-    return next(new Error("This order looks empty!"));
-  }
+      if (order.userId !== currUser) {
+        throw new Error("Unauthorized!");
+      }
 
-  if (order[datastore.KEY].parent.name.toString() !== req.user._id.toString()) {
-    return next(new Error("Unauthorized!"));
-  }
+      let productsArray = [];
+      for (product of order.products) {
+        let p = {
+          quantity: product.quantity,
+          product: {},
+        };
+        p.product = await Product.get(product.productId);
+        productsArray.push(p);
+      }
 
-  // For each ProductOrder get the product details from MongoDB
-  productsArray = [];
-  for (const productOrder of productOrders) {
-    let p = {
-      quantity: productOrder.quantity,
-      product: {},
-    };
-    p.product = await Product.findById(productOrder.product);
-    productsArray.push(p);
-  }
-  if (productsArray.length === 0) {
-    return next(
-      new Error("Mmm...this is bad, something is not right in the database.")
-    );
-  }
+      const invoiceName = "invoice-" + orderId + ".pdf";
+      const invoicePath = path.join("data", "invoices", invoiceName);
 
-  const invoiceName = "invoice-" + orderId + ".pdf";
-  const invoicePath = path.join("data", "invoices", invoiceName);
-
-  const pdfDoc = new PDFDocument();
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader(
-    "Content-Disposition",
-    'inline; filename="' + invoiceName + '"'
-  );
-  pdfDoc.pipe(fs.createWriteStream(invoicePath));
-  pdfDoc.pipe(res);
-
-  pdfDoc.fontSize(26).text("Invoice", { underline: true });
-  pdfDoc.text(" ");
-  let totalPrice = 0;
-
-  productsArray.forEach((prod) => {
-    totalPrice += prod.quantity * prod.product.price;
-    pdfDoc
-      .fontSize(14)
-      .text(
-        prod.product.title +
-          " - " +
-          prod.quantity +
-          " x " +
-          "$" +
-          prod.product.price
+      const pdfDoc = new PDFDocument();
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        'inline; filename="' + invoiceName + '"'
       );
-  });
-  pdfDoc.text("---");
-  pdfDoc.fontSize(18).text("Total Price: $" + totalPrice.toFixed(2));
-  pdfDoc.end();
+      pdfDoc.pipe(fs.createWriteStream(invoicePath));
+      pdfDoc.pipe(res);
+
+      pdfDoc.fontSize(26).text("Invoice", { underline: true });
+      pdfDoc.text(" ");
+      let totalPrice = 0;
+
+      productsArray.forEach((prod) => {
+        totalPrice += prod.quantity * prod.product.price;
+        pdfDoc
+          .fontSize(14)
+          .text(
+            prod.product.title +
+              " - " +
+              prod.quantity +
+              " x " +
+              "$" +
+              prod.product.price
+          );
+      });
+      pdfDoc.text("---");
+      pdfDoc.fontSize(18).text("Total Price: $" + totalPrice.toFixed(2));
+      pdfDoc.end();
+    })
+    .catch((err) => {
+      console.log(err);
+      const error = new Error(err);
+      error.httpStatusCode = 500;
+      return next(error);
+    });
 };
 
 exports.postStripeWebhook = async (req, res, next) => {
   const payload = req.body;
-
   const sig = req.headers["stripe-signature"];
   const endpointSecret = process.env.STRIPE_EP_SECRET;
   let event;
@@ -407,37 +432,33 @@ exports.postStripeWebhook = async (req, res, next) => {
   // Handle the checkout.session.completed event
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
-    const orderId = session.payment_intent;
-    const userId = session.client_reference_id;
+    const processorOrderId = session.payment_intent;
 
-    const orderKey = datastore.key(["User", userId, "Order", orderId]);
-    const [order] = await datastore.get(orderKey);
-
-    if (order) {
-      const entity = {
-        key: orderKey,
-        data: {
-          status: "Completed",
-        },
-      };
-      try {
-        await datastore.update(entity);
-        console.log("Webhook successful");
-        res.status(200).json({
-          verification_status: "SUCCESS",
+    const orderPostData = {
+      status: "COMPLETED",
+    };
+    Order.findOne({ processorOrderId: processorOrderId })
+      .then((result) => {
+        const order = result.entityData;
+        const orderId = parseInt(order[datastore.KEY].id);
+        return Order.update(orderId, orderPostData).then((result) => {
+          console.log("Webhook: Order Updated");
+          res.status(200).json({
+            verification_status: "SUCCESS",
+          });
         });
-      } catch (error) {
-        console.log("Error updating the database");
-      }
-    } else {
-      // Handles race condition where the webhook arrives before the order is created.
-      // 404 forces Stripe to send the webhook again.
-      // Consider refactoring creating the order from the webhook.
-      console.log("Order not found.");
-      res.status(404).json({
-        verification_status: "SUCCESS, BUT ORDER NOT READY",
+      })
+      .catch((err) => {
+        console.log(err);
+        res.status(400).json({
+          verification_status: "SUCCESS, BUT ORDER NOT READY",
+        });
       });
-    }
+  } else {
+    // Received another webhook we don't care about
+    res.status(200).json({
+      verification_status: "SUCCESS",
+    });
   }
 };
 
@@ -509,50 +530,29 @@ exports.postPaypalWebhook = (req, res, next) => {
             const upLink = links.find((obj) => {
               return obj.rel === "up";
             });
-            const orderId = upLink.href.match(/\/orders\/(.*)/)[1];
-
-            const orderQuery = datastore
-              .createQuery("Order")
-              .filter("orderId", "=", orderId);
-            const [orders] = await datastore.runQuery(orderQuery);
-
-            if (orders) {
-              const order = orders[0];
-              const userId = order[datastore.KEY].parent.name.toString();
-              const orderKey = datastore.key([
-                "User",
-                userId,
-                "Order",
-                orderId,
-              ]);
-              const entity = {
-                key: orderKey,
-                data: {
-                  status: "Completed",
-                },
-              };
-              try {
-                await datastore.update(entity);
-                console.log("Webhook successful");
-                res.status(200).json({
-                  verification_status: "SUCCESS",
+            const processorOrderId = upLink.href.match(/\/orders\/(.*)/)[1];
+            const orderPostData = {
+              status: "COMPLETED",
+            };
+            Order.findOne({ processorOrderId: processorOrderId })
+              .then((result) => {
+                const order = result.entityData;
+                const orderId = parseInt(order[datastore.KEY].id);
+                return Order.update(orderId, orderPostData).then((result) => {
+                  console.log("Webhook: Order Updated");
+                  res.status(200).json({
+                    verification_status: "SUCCESS",
+                  });
                 });
-              } catch (error) {
-                console.log("Error updating the database");
-              }
-            } else {
-              // Handles race condition where the webhook arrives before the order is created.
-              // 404 forces Stripe to send the webhook again.
-              // Consider refactoring creating the order from the webhook.
-              console.log("Order not found.");
-              res.status(404).json({
-                verification_status: "SUCCESS, BUT ORDER NOT READY",
+              })
+              .catch((err) => {
+                console.log(err);
+                res.status(400).json({
+                  verification_status: "SUCCESS, BUT ORDER NOT READY",
+                });
               });
-            }
           } else {
-            console.log(
-              "Validation succeeded, but I don't care about this webhook"
-            );
+            // Received another webhook we don't care about
             res.status(200).json({
               verification_status: "SUCCESS",
             });

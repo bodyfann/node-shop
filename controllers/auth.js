@@ -65,19 +65,8 @@ exports.postLogin = (req, res, next) => {
   }
 
   User.findOne({ email: email })
-    .then((user) => {
-      if (!user) {
-        return res.status(422).render("auth/login", {
-          path: "/login",
-          pageTitle: "Login",
-          errorMessage: "Invalid email or password.",
-          oldInput: {
-            email: email,
-            password: password,
-          },
-          validationErrors: [],
-        });
-      }
+    .then((entity) => {
+      const user = entity.entityData;
       bcrypt
         .compare(password, user.password)
         .then((doMatch) => {
@@ -106,9 +95,17 @@ exports.postLogin = (req, res, next) => {
         });
     })
     .catch((err) => {
-      const error = new Error(err);
-      error.httpStatusCode = 500;
-      return next(error);
+      console.log(err);
+      return res.status(422).render("auth/login", {
+        path: "/login",
+        pageTitle: "Login",
+        errorMessage: "Invalid email or password.",
+        oldInput: {
+          email: email,
+          password: password,
+        },
+        validationErrors: [],
+      });
     });
 };
 
@@ -116,6 +113,7 @@ exports.postSignup = (req, res, next) => {
   const email = req.body.email;
   const password = req.body.password;
   const errors = validationResult(req);
+
   if (!errors.isEmpty()) {
     return res.status(422).render("auth/signup", {
       path: "/signup",
@@ -129,7 +127,6 @@ exports.postSignup = (req, res, next) => {
       validationErrors: errors.array(),
     });
   }
-
   bcrypt
     .hash(password, 12)
     .then((hashedPassword) => {
@@ -141,6 +138,7 @@ exports.postSignup = (req, res, next) => {
       return user.save();
     })
     .then((result) => {
+      console.log("User created");
       res.redirect("/login");
       const msg = {
         to: email,
@@ -157,6 +155,7 @@ exports.postSignup = (req, res, next) => {
         .catch((err) => console.log(err));
     })
     .catch((err) => {
+      console.log(err);
       const error = new Error(err);
       error.httpStatusCode = 500;
       return next(error);
@@ -191,14 +190,15 @@ exports.postReset = (req, res, next) => {
       return res.redirect("/reset");
     }
     const token = buffer.toString("hex");
+
     User.findOne({ email: req.body.email })
       .then((user) => {
-        if (!user) {
+        if (!user.entityData) {
           req.flash("error", "No account with that email found.");
           return res.redirect("/reset");
         }
-        user.resetToken = token;
-        user.resetTokenExpiration = Date.now() + 3600000;
+        user.entityData.resetToken = token;
+        user.entityData.resetTokenExpiration = Date.now() + 3600000;
         return user.save();
       })
       .then((result) => {
@@ -209,11 +209,12 @@ exports.postReset = (req, res, next) => {
           subject: "Password Reset",
           html: `
           <p>You requested a password reset</p>
-          <p>Click this <a href="http://localhost:3000/reset/${token}">link</a> to set a new password.</p>
+          <p>Click this <a href="http://localhost:8080/reset/${token}">link</a> to set a new password.</p>
           `,
         };
         sgMail.send(msg).then(() => {
           console.log("Email sent to " + req.body.email);
+          //console.log(`http://localhost:8080/reset/${token}`);
         });
       })
       .catch((err) => {
@@ -228,13 +229,20 @@ exports.getNewPasswordPage = (req, res, next) => {
   const token = req.params.token;
   User.findOne({
     resetToken: token,
-    resetTokenExpiration: { $gt: Date.now() },
   })
-    .then((user) => {
+    .then((entity) => {
+      const user = entity.entityData;
       if (!user) {
         let message = req.flash(
           "error",
           "Ooops! That reset password link has already been used. If you still need to reset your password, plase submit a new request."
+        );
+        return res.redirect("/login");
+      }
+      if (Date.now() > user.resetTokenExpiration) {
+        let message = req.flash(
+          "error",
+          "Ooops! That reset password link seems to have expired. If you still need to reset your password, plase submit a new request."
         );
         return res.redirect("/login");
       }
@@ -248,11 +256,12 @@ exports.getNewPasswordPage = (req, res, next) => {
         path: "/new-password",
         pageTitle: "New Password",
         errorMessage: message,
-        userId: user._id.toString(),
+        userId: user.id.toString(),
         passwordToken: token,
       });
     })
     .catch((err) => {
+      console.log(err);
       const error = new Error(err);
       error.httpStatusCode = 500;
       return next(error);
@@ -261,29 +270,35 @@ exports.getNewPasswordPage = (req, res, next) => {
 
 exports.postNewPassword = (req, res, next) => {
   const newPassword = req.body.password;
-  const userId = req.body.userId;
+  const userId = parseInt(req.body.userId);
   const passwordToken = req.body.passwordToken;
   let resetUser;
 
   User.findOne({
     resetToken: passwordToken,
-    resetTokenExpiration: { $gt: Date.now() },
-    _id: userId,
   })
     .then((user) => {
       resetUser = user;
       return bcrypt.hash(newPassword, 12);
     })
     .then((hashedPassword) => {
-      resetUser.password = hashedPassword;
-      resetUser.resetToken = null;
-      resetUser.resetTokenExpiration = undefined;
-      return resetUser.save();
+      if (Date.now() > resetUser.entityData.resetTokenExpiration) {
+        let message = req.flash(
+          "error",
+          "Ooops! That reset password link seems to have expired. If you still need to reset your password, plase submit a new request."
+        );
+      } else {
+        resetUser.entityData.password = hashedPassword;
+        resetUser.entityData.resetToken = null;
+        resetUser.entityData.resetTokenExpiration = undefined;
+        return resetUser.save();
+      }
     })
     .then((result) => {
       res.redirect("/login");
     })
     .catch((err) => {
+      console.log(err);
       const error = new Error(err);
       error.httpStatusCode = 500;
       return next(error);

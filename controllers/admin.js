@@ -5,6 +5,8 @@ const { Storage } = require("@google-cloud/storage");
 
 const { validationResult } = require("express-validator");
 
+const { Datastore } = require("@google-cloud/datastore");
+const datastore = new Datastore();
 const Product = require("../models/product");
 
 // Instantiate a storage client
@@ -75,10 +77,10 @@ exports.postAddProduct = (req, res, next) => {
 
   const product = new Product({
     title: title,
-    price: price,
+    price: parseFloat(price),
     description: description,
     imageUrl: imageUrl,
-    userId: req.user,
+    userId: req.user[datastore.KEY].id.toString(),
   });
 
   product
@@ -88,6 +90,7 @@ exports.postAddProduct = (req, res, next) => {
       res.redirect("/admin/products");
     })
     .catch((err) => {
+      console.log(err);
       const error = new Error(err);
       error.httpStatusCode = 500;
       return next(error);
@@ -99,12 +102,15 @@ exports.getEditProductPage = (req, res, next) => {
   if (!editMode) {
     return res.redirect("/");
   }
-  const prodId = req.params.productId;
-  Product.findById(prodId)
-    .then((product) => {
+  const prodId = parseInt(req.params.productId);
+
+  Product.get(prodId)
+    .then((entity) => {
+      const product = entity.entityData;
       if (!product) {
         return res.redirect("/");
       }
+      product.id = prodId;
       res.render("admin/edit-product", {
         pageTitle: "Edit Product",
         path: "/admin/edit-product",
@@ -116,6 +122,7 @@ exports.getEditProductPage = (req, res, next) => {
       });
     })
     .catch((err) => {
+      console.log(err);
       const error = new Error(err);
       error.httpStatusCode = 500;
       return next(error);
@@ -123,7 +130,7 @@ exports.getEditProductPage = (req, res, next) => {
 };
 
 exports.postEditProduct = (req, res, next) => {
-  const prodId = req.body.productId;
+  const prodId = parseInt(req.body.productId);
   const updatedTitle = req.body.title;
   const updatedPrice = req.body.price;
   const image = req.file;
@@ -141,20 +148,25 @@ exports.postEditProduct = (req, res, next) => {
         title: updatedTitle,
         price: updatedPrice,
         description: updatedDesc,
-        _id: prodId,
+        id: prodId,
       },
       validationErrors: errors.array(),
     });
   }
 
-  Product.findById(prodId)
-    .then((product) => {
-      if (product.userId.toString() !== req.user._id.toString()) {
+  let productPostData = {};
+  Product.get(prodId)
+    .then((entity) => {
+      const product = entity.entityData;
+      const currUser = req.user[datastore.KEY].id.toString();
+      if (product.userId.toString() !== currUser) {
         return res.redirect("/");
       }
-      product.title = updatedTitle;
-      product.price = updatedPrice;
-      product.description = updatedDesc;
+      productPostData.id = prodId;
+      productPostData.title = updatedTitle;
+      productPostData.price = parseFloat(updatedPrice);
+      productPostData.description = updatedDesc;
+      productPostData.userId = currUser;
       if (image) {
         // Delete older image
         const olderImage = product.imageUrl.match(/appspot.com\/(.*)/)[1];
@@ -165,15 +177,16 @@ exports.postEditProduct = (req, res, next) => {
         fileHelper.uploadImage(req.file, blob);
 
         const imageUrl = `https://storage.googleapis.com/${bucket.name}/${blob.name}`;
-        product.imageUrl = imageUrl;
+        productPostData.imageUrl = imageUrl;
       }
-      product.userId = req.user._id;
-      return product.save().then((result) => {
+
+      return Product.update(prodId, productPostData).then((result) => {
         console.log("Product Updated");
         res.redirect("/admin/products");
       });
     })
     .catch((err) => {
+      console.log(err);
       const error = new Error(err);
       error.httpStatusCode = 500;
       return next(error);
@@ -181,8 +194,9 @@ exports.postEditProduct = (req, res, next) => {
 };
 
 exports.getProductsPage = (req, res, next) => {
-  Product.find({ userId: req.user._id })
-    .then((products) => {
+  Product.list()
+    .then((result) => {
+      const products = result.entities;
       res.render("admin/products", {
         prods: products,
         pageTitle: "Admin Products",
@@ -190,6 +204,7 @@ exports.getProductsPage = (req, res, next) => {
       });
     })
     .catch((err) => {
+      console.log(err);
       const error = new Error(err);
       error.httpStatusCode = 500;
       return next(error);
@@ -197,46 +212,28 @@ exports.getProductsPage = (req, res, next) => {
 };
 
 exports.deleteProduct = (req, res, next) => {
-  const prodId = req.params.productId;
-  Product.findById(prodId)
-    .then((product) => {
+  const prodId = parseInt(req.params.productId);
+
+  Product.get(prodId)
+    .then((entity) => {
+      const product = entity.entityData;
       if (!product) {
         return next(new Error("Product not found!"));
       }
       const olderImage = product.imageUrl.match(/appspot.com\/(.*)/)[1];
       fileHelper.deleteImage(storage, bucket.name, olderImage);
-      return Product.deleteOne({ _id: prodId, userId: req.user._id });
+      return Product.delete(prodId);
     })
     .then((result) => {
-      console.log("Product Destroyed");
+      console.log("Product Deleted");
       res.status(200).json({
         message: "Success",
       });
     })
     .catch((err) => {
+      console.log(err);
       res.status(500).json({
         message: "Deleting product failed!",
       });
     });
-};
-
-// PLEASE DELETE ME AT SOME POINT
-const { Datastore } = require("@google-cloud/datastore");
-const datastore = new Datastore();
-
-exports.runDSQuery = async (req, res, next) => {
-  // Get all orders (optional for current user)
-  const currUser = req.user._id.toString();
-
-  //const ancestorKey = datastore.key(["User", currUser]);
-  const ordersQuery = datastore.createQuery("Order"); //.hasAncestor(ancestorKey);
-  const [orders] = await datastore.runQuery(ordersQuery);
-  res.status(200).json({
-    orders,
-  });
-  console.log(orders);
-
-  // Delete all orders
-  // TBD
-  //await datastore.delete(orderKey);
 };

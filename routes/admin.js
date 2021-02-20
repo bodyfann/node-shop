@@ -50,7 +50,4 @@ router.post(
 
 router.delete("/product/:productId", isAuth, adminController.deleteProduct);
 
-// PLEASE DELETE ME AT SOME POINT
-router.get("/DS_Query", adminController.runDSQuery);
-
 module.exports = router;

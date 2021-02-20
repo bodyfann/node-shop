@@ -1,6 +1,8 @@
-const mongoose = require("mongoose");
+const { instances } = require("gstore-node");
 
-const Schema = mongoose.Schema;
+//Retrieve the gstore instance
+const gstore = instances.get("node-shop");
+const { Schema } = gstore;
 
 const userSchema = new Schema({
   email: {
@@ -17,19 +19,23 @@ const userSchema = new Schema({
     items: [
       {
         productId: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "Product",
+          type: String,
           required: true,
         },
+        // productId: {
+        //   type: Schema.Types.Key,
+        //   ref: "Product",
+        //   required: true,
+        // },
         quantity: { type: Number, required: true },
       },
     ],
   },
 });
 
-userSchema.methods.addToCart = function (product) {
+userSchema.methods.addToCart = function (productId) {
   const cartProductIndex = this.cart.items.findIndex((cp) => {
-    return cp.productId.toString() === product._id.toString();
+    return cp.productId === productId;
   });
   let newQuantity = 1;
   const updatedCartItems = [...this.cart.items];
@@ -39,7 +45,7 @@ userSchema.methods.addToCart = function (product) {
     updatedCartItems[cartProductIndex].quantity = newQuantity;
   } else {
     updatedCartItems.push({
-      productId: product._id,
+      productId: productId,
       quantity: newQuantity,
     });
   }
@@ -63,4 +69,4 @@ userSchema.methods.clearCart = function () {
   return this.save();
 };
 
-module.exports = mongoose.model("User", userSchema);
+module.exports = gstore.model("User", userSchema);

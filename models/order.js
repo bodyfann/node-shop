@@ -1,6 +1,8 @@
-const mongoose = require("mongoose");
+const { instances } = require("gstore-node");
 
-const Schema = mongoose.Schema;
+//Retrieve the gstore instance
+const gstore = instances.get("node-shop");
+const { Schema } = gstore;
 
 const orderSchema = new Schema({
   products: [
@@ -9,17 +11,20 @@ const orderSchema = new Schema({
       quantity: { type: Number, required: true },
     },
   ],
-  user: {
-    email: { type: String, required: true },
+  userId: { type: Number, required: true },
+  //   user: {
+  //     email: { type: String, required: true },
 
-    userId: {
-      type: Schema.Types.ObjectId,
-      required: true,
-      ref: "User",
-    },
-  },
+  //     userId: {
+  //       type: Schema.Types.ObjectId,
+  //       required: true,
+  //       ref: "User",
+  //     },
+  //   },
   status: { type: String, required: true },
   processorOrderId: { type: String, required: false },
+  transactionId: { type: String, required: false },
+  refundId: { type: String, required: false },
 });
 
-module.exports = mongoose.model("Order", orderSchema);
+module.exports = gstore.model("Order", orderSchema);

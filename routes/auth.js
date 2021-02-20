@@ -30,15 +30,22 @@ router.post(
       .isEmail()
       .withMessage("Please enter a valid email.")
       .custom((value, { req }) => {
-        return User.findOne({ email: value }).then((userDoc) => {
-          if (userDoc) {
-            return Promise.reject(
-              "Email address already exists, please pick a different one."
-            );
-          }
-        });
-      })
-      .normalizeEmail(),
+        return User.findOne({ email: value })
+          .then((userDoc) => {
+            if (userDoc) {
+              return Promise.reject(
+                "Email address already exists, please pick a different one."
+              );
+            }
+          })
+          .catch((err) => {
+            //console.log(err);
+            if (err.code === "ERR_ENTITY_NOT_FOUND") {
+              return Promise.resolve;
+            }
+            return Promise.reject(err);
+          });
+      }),
     body(
       "password",
       "Please enter a password with only numbers and text and at least 5 characters"

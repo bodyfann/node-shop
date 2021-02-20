@@ -3,10 +3,17 @@ const path = require("path");
 const express = require("express");
 const mongoose = require("mongoose");
 const session = require("express-session");
-//const MongoDBStore = require("connect-mongodb-session")(session);
 
 const { Datastore } = require("@google-cloud/datastore");
 const { DatastoreStore } = require("@google-cloud/connect-datastore");
+const { Gstore, instances } = require("gstore-node");
+
+const gstore = new Gstore();
+const datastore = new Datastore();
+// Then connect gstore to the datastore instance
+gstore.connect(datastore);
+// Save the gstore instance
+instances.set("node-shop", gstore);
 
 const csrf = require("csurf");
 const flash = require("connect-flash");
@@ -19,10 +26,6 @@ const User = require("./models/user");
 const MONGODB_URI = process.env.MONGO_DB_URI;
 
 const app = express();
-// const store = MongoDBStore({
-//   uri: MONGODB_URI,
-//   collection: "sessions",
-// });
 
 const csrfProtection = csrf();
 
@@ -62,7 +65,6 @@ app.use(
     secret: "my secret",
     resave: false,
     saveUninitialized: false,
-    //store: store,
     store: new DatastoreStore({
       kind: "express-sessions",
       expirationMs: 0,
@@ -105,8 +107,10 @@ app.use((req, res, next) => {
   if (!req.session.user) {
     return next();
   }
-  User.findById(req.session.user._id)
-    .then((user) => {
+  const userId = parseInt(req.session.user.id);
+  User.get(userId)
+    .then((entity) => {
+      const user = entity.entityData;
       if (!user) {
         return next();
       }
