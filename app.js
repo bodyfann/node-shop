@@ -1,7 +1,6 @@
 const path = require("path");
 
 const express = require("express");
-const mongoose = require("mongoose");
 const session = require("express-session");
 
 const { Datastore } = require("@google-cloud/datastore");
@@ -22,8 +21,6 @@ const Multer = require("multer");
 const errorController = require("./controllers/error");
 const shopController = require("./controllers/shop");
 const User = require("./models/user");
-
-const MONGODB_URI = process.env.MONGO_DB_URI;
 
 const app = express();
 
@@ -139,14 +136,4 @@ app.use((error, req, res, next) => {
   res.redirect("/500");
 });
 
-mongoose.set("useNewUrlParser", true);
-mongoose.set("useUnifiedTopology", true);
-mongoose.set("useFindAndModify", false);
-mongoose
-  .connect(MONGODB_URI)
-  .then((result) => {
-    app.listen(8080);
-  })
-  .catch((err) => {
-    console.log(err);
-  });
+app.listen(8080);

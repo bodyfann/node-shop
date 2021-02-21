@@ -1,4 +1,3 @@
-const mongoose = require("mongoose");
 const fileHelper = require("../util/file");
 
 const { Storage } = require("@google-cloud/storage");
