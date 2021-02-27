@@ -284,18 +284,38 @@ exports.checkoutSuccess = async (req, res, next) => {
         throw new Error("Shopping Cart is empty!");
       }
 
-      // Create Order
-      const order = new Order({
-        products: products,
-        userId: currUser,
-        processorOrderId: orderId,
-        status: "PENDING",
-      });
-
-      return order.save();
+      // Update Order if already created from webhook, if not create it
+      Order.findOne({ processorOrderId: orderId })
+        .then((result) => {
+          orderPostData = {
+            products: products,
+            userId: currUser,
+            status: "COMPLETED",
+          };
+          const order = result.entityData;
+          const orderId = parseInt(order[datastore.KEY].id);
+          return Order.update(orderId, orderPostData).then((result) => {
+            console.log("Order Updated");
+          });
+        })
+        .catch((err) => {
+          console.log(err);
+          if (err.code == "ERR_ENTITY_NOT_FOUND") {
+            // Create order
+            const order = new Order({
+              products: products,
+              userId: currUser,
+              processorOrderId: orderId,
+              status: "PENDING",
+            });
+            console.log("Order Created");
+            return order.save();
+          } else {
+            return next(err);
+          }
+        });
     })
     .then((result) => {
-      console.log("Order Created");
       User.get(currUser).then((user) => {
         return user.clearCart();
       });
@@ -313,6 +333,7 @@ exports.checkoutSuccess = async (req, res, next) => {
 
 exports.getOrdersPage = async (req, res, next) => {
   const currUser = parseInt(req.user[datastore.KEY].id);
+  console.log("Orders Page");
 
   let ordersJSON = []; // Array of order objects to pass to the view
   // Get all orders for current user
@@ -450,9 +471,22 @@ exports.postStripeWebhook = async (req, res, next) => {
       })
       .catch((err) => {
         console.log(err);
-        res.status(400).json({
-          verification_status: "SUCCESS, BUT ORDER NOT READY",
-        });
+        if (err.code == "ERR_ENTITY_NOT_FOUND") {
+          // Create order
+          const order = new Order({
+            processorOrderId: processorOrderId.toString(),
+            status: "PENDING",
+          });
+          order.save();
+          console.log("Webhook: Order Created");
+          res.status(200).json({
+            verification_status: "SUCCESS",
+          });
+        } else {
+          res.status(400).json({
+            verification_status: "SUCCESS, BUT ORDER NOT READY",
+          });
+        }
       });
   } else {
     // Received another webhook we don't care about
@@ -547,9 +581,23 @@ exports.postPaypalWebhook = (req, res, next) => {
               })
               .catch((err) => {
                 console.log(err);
-                res.status(400).json({
-                  verification_status: "SUCCESS, BUT ORDER NOT READY",
-                });
+                if (err.code == "ERR_ENTITY_NOT_FOUND") {
+                  // Create order
+                  const order = new Order({
+                    userId: currUser,
+                    processorOrderId: orderId,
+                    status: "PENDING",
+                  });
+                  order.save();
+                  console.log("Webhook: Order Created");
+                  res.status(200).json({
+                    verification_status: "SUCCESS",
+                  });
+                } else {
+                  res.status(400).json({
+                    verification_status: "SUCCESS, BUT ORDER NOT READY",
+                  });
+                }
               });
           } else {
             // Received another webhook we don't care about
